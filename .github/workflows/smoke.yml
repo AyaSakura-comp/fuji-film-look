@@ -1,0 +1,62 @@
+name: smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    # Apple silicon runner: darktable 5.6.2 ships an arm64 DMG only
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      # raw.pixls.us, CC0: Sony ILCE-7C sample (also in the skill's 20-RAW test set)
+      TEST_RAW_URL: https://raw.pixls.us/data/Sony/ILCE-7C/DSC00018.ARW
+      TEST_RAW_SHA256: 6bfac3286f0e931e949b23e1bb236b737bb9e4117b8b42fa09e36f40f0fa8408
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile scripts and build every look's XMP (no darktable needed)
+        run: |
+          python3 -m py_compile scripts/*.py
+          bash -n install.sh
+          for look in classic-chrome classic-neg street portrait; do
+            python3 scripts/fuji_look.py in.ARW --look "$look" --xmp-only "$RUNNER_TEMP/$look.xmp" >/dev/null
+            grep -q colorbalancergb "$RUNNER_TEMP/$look.xmp"
+          done
+
+      - name: Missing darktable is reported, not crashed on
+        run: |
+          set +e
+          out=$(DARKTABLE_CLI=/nonexistent python3 -c 'import sys; sys.path.insert(0, "scripts"); import fuji_look as F; F.DARKTABLE_CLI_CANDIDATES[:] = ["/nonexistent"]; F.find_cli()' 2>&1)
+          rc=$?
+          echo "$out"
+          test $rc -ne 0 && echo "$out" | grep -q "depends on darktable 5.6"
+
+      - name: install.sh (downloads darktable 5.6.2, checks SHA-256; installs uv)
+        run: ./install.sh --skills-dir "$RUNNER_TEMP/skills"
+
+      - name: install.sh --check
+        run: ./install.sh --check --skills-dir "$RUNNER_TEMP/skills"
+
+      - name: Download a test RAW
+        run: |
+          mkdir -p "$RUNNER_TEMP/in"
+          curl -fL --retry 3 -o "$RUNNER_TEMP/in/DSC00018.ARW" "$TEST_RAW_URL"
+          echo "$TEST_RAW_SHA256  $RUNNER_TEMP/in/DSC00018.ARW" | shasum -a 256 -c -
+
+      - name: Render + verify (portrait, full before/after)
+        run: uv run scripts/run.py "$RUNNER_TEMP/in" -o "$RUNNER_TEMP/out/portrait" --look portrait --verify full
+
+      - name: Render + verify (classic-chrome, with grain)
+        run: uv run scripts/run.py "$RUNNER_TEMP/in" -o "$RUNNER_TEMP/out/chrome" --look classic-chrome --grain --verify full
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-output
+          path: ${{ runner.temp }}/out
+          if-no-files-found: ignore
