@@ -4,7 +4,7 @@ An agent skill (Claude Code, pi) that turns photos into Fujifilm-style film look
 
 1. reads the lighting (night, tungsten/sodium/neon, backlight, spotlit subjects on a dark set, haze, under- or over-exposure) and picks per-photo corrections;
 2. renders the look with `darktable-cli`;
-3. checks the result numerically against the look's signature, and against your reference photos if you give some;
+3. checks the result numerically against the look's signature (faded blacks, no new clipping, whites kept bright, colour shifts), and against your reference photos if you give some;
 4. writes a report with contact sheets.
 
 把照片（JPEG 或 Sony ARW 等 RAW）用 darktable 調成富士底片風。內建 Classic Chrome、Classic Neg、日系街拍和人像（膚色紅潤，適合人和娃娃）四種風格，會依每張照片的光線自動修正，最後再用數值和縮圖驗證結果。

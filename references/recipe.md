@@ -5,7 +5,7 @@
 | Module | Version | Size (bytes) | Role |
 |---|---|---|---|
 | colorbalancergb | 5 | 132 | global chroma down, cool lift in shadows, slight warm gain in highlights, small contrast |
-| rgbcurve | 1 | 516 | film tone curve, per channel (`preserve_colors=none`): lifted toe (faded blacks), gentle S, top node <1 (roll-off, no clipping) |
+| rgbcurve | 1 | 516 | film tone curve, per channel (`preserve_colors=none`): lifted toe (faded blacks), gentle S, top node 0.965–0.975 (white ≈ L 97–98, shoulder from ≈ L 85; was 0.935–0.95 until 2026-11-11) |
 | colorzones | 5 | 520 | per-hue lightness, chroma and hue offsets (select by hue, smooth mode, Catmull-Rom) |
 | grain | 2 | 16 | fine lightness grain |
 | bilat (local contrast) | 3 | 20 | street look only: local laplacian, detail +35% |
@@ -81,6 +81,7 @@ Per-photo modules written by `fuji_look.correction_entries()` (darktable 5.6.2, 
 | channelmixerrgb (instance 1, "auto wb") | 3 | 160 | `<24f6i4i4fii`: red/green/blue rows identity, saturation/lightness/grey 0, normalize ×6 = 0, illuminant 7 CUSTOM, fluo 2, led 4, adaptation 1 CAT16, x, y, temperature (unused), gamut 1.0, clip 1, version 2 (= v3 algorithm). iop order: `channelmixerrgb,1` right after `channelmixerrgb,0` |
 | shadhi (backlit) | 5 | 48 | `<i8fIfi`: order 0, radius 100, shadows 20–45, whitepoint 0, highlights −25, reserved 0, compress 50, shadows_ccorrect 100, highlights_ccorrect 50, flags 127 (UNBOUND_DEFAULT), low_approximation 1e-6, algo 1 bilateral |
 | colorzones (instance 1, "reds first", street) | 5 | 520 | same layout as instance 0, only `pre_zone_L` (magenta-red −0.04, red −0.08, magenta −0.02); iop order: `colorzones,1` right before `colorbalancergb,0` |
+| colorzones (instance 2, "highlight shoulder", all looks) | 5 | 520 | channel 0 (select by **lightness**), only the C curve: `HI_CHROMA` chroma scale 1.0 up to L 55, 0.98 at L 66, 0.92 at 76, 0.83 at 86, 0.70 at 100 (scaled by `--strength`; at night the cut is scaled by `chroma_keep`). iop order: `colorzones,2` right after `colorzones,0` |
 
 darktable's own defaults read back from an export (to replicate exactly): exposure +0.7 EV, black −0.000244, compensate bias on; channelmixerrgb illuminant D (2) with the as-shot xy/CCT (e.g. 0.3685, 0.3771, 4339 K), CAT16; sigmoid contrast 1.5, skew 0, target black 0.0152 %, white 100 %.
 
@@ -102,3 +103,16 @@ Night neon (sign, palace, pizzeria CR3), sodium street (cat NEF, Prague DNG), sn
 ### Spotlight / pool of light (2026-11-11)
 Halloween doll shoot, 67 Sony A7CR ARWs (EV100 6–9 → dim, dark set, doll under a spot): the dim rule's median target (p50 → 25) asked for +1.4–1.5 EV on 62 frames. Measured against the camera JPEGs (aligned, same crop): camera L p50 ≈ 10, p95 ≈ 60; old output p50 29, p95 82. Fixed exposures on 6 frames (+0, +0.4, +0.7 EV) showed the subject at p95 60–67 with the surround dark was right. `spot_weight` = clip((dark − 0.30)/0.15) × clip((L p95 − 30)/10) (dark = share of L < 8 in darktable's default render); the subject target is p95 → 60, max +0.8 EV, p99 ≤ 88, blended with the old dim rule by the weight. Result: 62 frames get +0.3–1.0 EV instead of +1.2–1.5. `--verify full`: 65/67 before the rule; 63/67 with the rule and the old reds bound (DSC04533/04534 at 0.80, DSC04539 at 0.79, DSC04519); **66/67** with the 0.78 bound (only DSC04519, a near-black tissue-box test shot). Portrait `reds kept` lower bound 0.80 → 0.78: dark crimson under dim light measures 0.79–0.80 and looks identical to 0.82 at 100%.
 Spatial metrics (top-20% blocks vs median block in stops, lit/dark block shares on a 10×10 grid) were computed but not needed: the dim class plus the dark share and p95 already isolate these frames on every test set.
+
+### Highlight white point (2026-11-11)
+
+Question from the user: are highlights over-suppressed? Test: 200 Sony RAWs (`sony200`), `--verify full`, output vs darktable's default render with the same auto corrections, and vs the camera's embedded JPEG.
+
+- Old curve tops (chrome/neg 0.95, street 0.945, portrait 0.935) cap white at L 95.7 / 95.7 / 95.3 / 94.4. Mid-tones and the p90–p99.5 slope were fine (portrait median 0.95), but what was white came out grey: frames with ≥0.3% of pixels at L ≥ 95 (43 of 200) → portrait L 92.5 median, 91.1 min (rank-based); chrome 93.7 / 92.2. Camera JPEGs reach L 100 (p99.9 median 94.8 vs output 88.3). Visible on white walls, frost, birch bark, lace, overcast skies.
+- New tops: chrome/neg 0.975, portrait 0.972, street 0.965 (L 90 → 89.6–91.5, 95 → 93.7–94.6, 100 → 97.0–97.9; shoulder slope at white 0.6–0.8 instead of 0.4–0.6).
+- Side effect: vivid sunlit colours left sRGB. Portrait clipped more than the source on 4 files (pink camellia petals 2.88% → 3.87%, red ixora flower, the sun, a pink flower field); street 3, neg 1. Lower tops alone (0.958) still failed 2/4, and highlight chroma −0.14 or saturation −0.12 barely helped. A 3rd color-zones instance selecting by lightness (`HI_CHROMA`: chroma ×1.0 to L 55, ×0.98 at 66, ×0.92 at 76, ×0.83 at 86, ×0.70 at 100) fixed it: camellia 2.34% (below the source), all 4 pass. Street needed its top at 0.965 for one sun shot (local contrast pushes the sun above 1 and the curve extrapolates).
+- Doll/skin cost (14 doll photos + the 4 flowers): skin C −1 to −4% (e.g. 19.4 → 18.8, iPhone face 25.1 → 24.1), skin hue and L unchanged, red dresses unchanged, cheeks still pink at 100%; whites p99.9 +2–3 L on the iPhone doll shots.
+- Result, 200 RAWs (current checks incl. the new `whites kept bright`): portrait 176 → **200/200**, chrome 195 → 197, neg 195 → 197, street 190 → 191 (remaining failures are the old shadow-colour/chroma ones). Rank-based whites median: portrait 92.5 → 94.7 (min 91.1 → 92.9), chrome 93.7 → 95.3, neg 94.0 → 95.5, street 93.5 → 94.5. Highlight slope portrait 0.95 → 0.98. Median L unchanged.
+- Halloween doll shoot (67): 66/67 as before (DSC04519); brightest 0.1% median L 84.8 → 85.5, top decile 89.8 → 91.0 (spotlit sets have few true whites).
+- `whites kept bright` was first written with a position mask (pixels ≥ 95 in the baseline): ILCE-7M4 read 89.9 even with `--strength 0` and no vignette (identity look 92.9), because the 800 px baseline and the 2048 px output are separate renders and the mask picks edge pixels (sky through leaves). The rank-based version compares the same share of the brightest pixels instead.
+

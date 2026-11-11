@@ -56,7 +56,8 @@ IOP_V50_JPG = "rawprepare invert temperature rasterfile highlights cacorrect hot
 RAW_EXT = {".arw", ".cr2", ".cr3", ".nef", ".raf", ".dng", ".orf", ".rw2", ".pef", ".srw", ".nrw", ".3fr", ".iiq"}
 
 
-def iop_order_list(is_raw: bool, wb_instance: bool = False, pre_zones: bool = False) -> str:
+def iop_order_list(is_raw: bool, wb_instance: bool = False, pre_zones: bool = False,
+                   hi_zones: bool = False) -> str:
     """Default v5 order with rgbcurve moved after vignette, so the film curve
     (faded blacks, highlight roll-off) acts on the final display-referred
     image: after sigmoid/filmic tone mapping for RAW, and after the vignette
@@ -69,6 +70,8 @@ def iop_order_list(is_raw: bool, wb_instance: bool = False, pre_zones: bool = Fa
         items.insert(items.index("channelmixerrgb,0") + 1, "channelmixerrgb,1")
     if pre_zones:  # 2nd color-zones instance BEFORE color balance rgb: acts on full-chroma colours
         items.insert(items.index("colorbalancergb,0"), "colorzones,1")
+    if hi_zones:  # 3rd color-zones instance (chroma by lightness) right after the main one
+        items.insert(items.index("colorzones,0") + 1, "colorzones,2")
     return ",".join(items)
 
 # ---------------------------------------------------------------- looks ---
@@ -78,13 +81,22 @@ def iop_order_list(is_raw: bool, wb_instance: bool = False, pre_zones: bool = Fa
 #   cyan ~0.54  sky ~0.72  blue ~0.84  magenta ~0.92
 HUE_X = [0.02, 0.10, 0.17, 0.27, 0.36, 0.54, 0.72, 0.84, 0.93]
 
+# Highlight shoulder (all looks): chroma scale by lightness (x = L/100, scale), applied by
+# a 3rd color-zones instance after the main one. Film desaturates as it nears white; it
+# keeps saturated sunlit colours (pink petals, red flowers, the sun) inside sRGB now that
+# the curve's white point is ~L 98 instead of 94-96. Skin (L 55-75) loses <=4% chroma.
+HI_CHROMA = [(0.0, 1.0), (0.55, 1.0), (0.66, 0.98), (0.76, 0.92), (0.86, 0.83), (1.0, 0.70)]
+
 LOOKS = {
     # muted, documentary, deep cyan-blue skies, darker restrained reds,
     # olive greens, hard-ish shadows, faded blacks
     "classic-chrome": dict(
-        # tone curve in *perceptual* (gamma 2.2) coordinates, (x, y) pairs
+        # tone curve in *perceptual* (gamma 2.2) coordinates, (x, y) pairs.
+        # Top end (all looks): white -> 0.965-0.975 (L* ~97-98) with a shoulder from ~L 85.
+        # Was 0.935-0.95 (white capped at L* 94-96): whites, frost, white walls and
+        # overcast skies read grey on the 200-RAW test (2026-11-11, references/recipe.md)
         curve=[(0.0, 0.095), (0.10, 0.138), (0.25, 0.242), (0.50, 0.500),
-               (0.75, 0.770), (0.90, 0.890), (1.0, 0.950)],
+               (0.75, 0.772), (0.90, 0.900), (1.0, 0.975)],
         # color balance rgb
         chroma_global=-0.11, saturation_global=0.0, vibrance=0.0,
         contrast=0.05,
@@ -100,7 +112,7 @@ LOOKS = {
     # highlights, deep reds, greens pushed toward teal
     "classic-neg": dict(
         curve=[(0.0, 0.090), (0.10, 0.125), (0.25, 0.228), (0.50, 0.500),
-               (0.75, 0.785), (0.90, 0.900), (1.0, 0.950)],
+               (0.75, 0.787), (0.90, 0.908), (1.0, 0.975)],
         chroma_global=-0.10, saturation_global=0.0, vibrance=0.0,
         contrast=0.05,
         shadows=(195.0, 0.045), highlights=(55.0, 0.020),
@@ -116,7 +128,7 @@ LOOKS = {
     # practical lights kept, crunchy local contrast, heavy grain + vignette
     "street": dict(
         curve=[(0.0, 0.135), (0.08, 0.150), (0.20, 0.205), (0.50, 0.510),
-               (0.75, 0.790), (0.90, 0.905), (1.0, 0.945)],
+               (0.75, 0.792), (0.90, 0.910), (1.0, 0.965)],
         chroma_global=-0.10, saturation_global=-0.03, vibrance=0.0,
         contrast=0.07,
         shadows=(220.0, 0.006), highlights=(225.0, 0.020),
@@ -136,7 +148,7 @@ LOOKS = {
     # dark red dresses and roses must stay red, not turn brown.
     "portrait": dict(
         curve=[(0.0, 0.120), (0.10, 0.160), (0.25, 0.262), (0.50, 0.505),
-               (0.75, 0.760), (0.90, 0.880), (1.0, 0.935)],
+               (0.75, 0.762), (0.90, 0.893), (1.0, 0.972)],
         chroma_global=-0.04, saturation_global=0.0, vibrance=0.0,
         contrast=0.0,
         shadows=(40.0, 0.008), highlights=(30.0, 0.015),
@@ -231,6 +243,18 @@ def p_colorzones(look, s, overrides):
     return struct.pack("<i120f3i3ifii", 2, *data, n, n, n, 1, 1, 1, 0.0, 0, 1)
 
 
+def p_colorzones_hi(nodes, s):
+    """color zones selected by lightness: chroma scale per L (0..1). Film-like
+    shoulder desaturation: saturated colours near white stay inside sRGB while
+    neutral whites keep the full white point."""
+    flat = lambda pts: [f for i in range(20) for f in (pts[i] if i < len(pts) else (0.0, 0.0))]
+    keep = [(0.0, 0.5), (1.0, 0.5)]
+    cpts = [(x, 0.5 + (k / 2 - 0.5) * s) for x, k in nodes]
+    data = flat(keep) + flat(cpts) + flat(keep)
+    # channel = lightness (0); CATMULL_ROM; strength 0; mode smooth; splines v2
+    return struct.pack("<i120f3i3ifii", 0, *data, 2, len(cpts), 2, 1, 1, 1, 0.0, 0, 1)
+
+
 def p_grain(coarseness, strength, midtones_bias=100.0):
     return struct.pack("<ifff", 2, coarseness / 213.2, strength, midtones_bias)
 
@@ -249,12 +273,13 @@ def p_vignette(brightness, shape=(80.0, 60.0)):
 def build_xmp(entries, is_raw=False) -> str:
     """entries: (op, modversion, params[, multi_priority, multi_name])"""
     lis = []
-    wb_instance = pre_zones = False
+    wb_instance = pre_zones = hi_zones = False
     for i, e in enumerate(entries):
         op, ver, params = e[:3]
         prio, mname = (e[3], e[4]) if len(e) > 3 else (0, "")
         wb_instance |= (op == "channelmixerrgb" and prio == 1)
         pre_zones |= (op == "colorzones" and prio == 1)
+        hi_zones |= (op == "colorzones" and prio == 2)
         lis.append(
             f'''     <rdf:li
       darktable:num="{i}"
@@ -277,7 +302,7 @@ def build_xmp(entries, is_raw=False) -> str:
    darktable:raw_params="0"
    darktable:auto_presets_applied="0"
    darktable:iop_order_version="0"
-   darktable:iop_order_list="{iop_order_list(is_raw, wb_instance, pre_zones)}"
+   darktable:iop_order_list="{iop_order_list(is_raw, wb_instance, pre_zones, hi_zones)}"
    darktable:history_end="{len(entries)}">
    <darktable:history>
     <rdf:Seq>
@@ -337,6 +362,7 @@ def adjusted_look(look, plan):
         if lk.get(key, 0.0) < 0:
             lk[key] = lk[key] * k
     lk["zone_C"] = [c * k if c < 0 else c for c in look["zone_C"]]
+    lk["hi_chroma"] = [(x, 1.0 - (1.0 - c) * k) for x, c in look.get("hi_chroma", HI_CHROMA)]
     return lk
 
 
@@ -441,6 +467,9 @@ def make_xmp(a, is_raw: bool, darktable_grain: bool = True, plan=None) -> str:
         ("rgbcurve", 1, p_rgbcurve(look, s)),
         ("colorzones", 5, p_colorzones(look, s, parse_zones(a.zone))),
     ]
+    hi = look.get("hi_chroma", HI_CHROMA)
+    if hi:
+        entries.append(("colorzones", 5, p_colorzones_hi(hi, s), 2, "highlight shoulder"))
     if look.get("local_contrast") and a.local_contrast > 0:
         entries.append(("bilat", 3, p_bilat(look["local_contrast"] * a.local_contrast * s)))
     gc, gs, *gb = look["grain"]

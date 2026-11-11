@@ -76,7 +76,9 @@ PROFILES = {
     "classic-chrome": dict(chroma=(0.55, 0.92), skin_min=0.80, warm_highlights=True, contrast=(0.82, 1.25), corr=0.95),
     "classic-neg": dict(chroma=(0.55, 1.10), skin_min=0.75, warm_highlights=True, contrast=(0.82, 1.30), corr=0.95),
     # street adds a lot of contrast to flat sources and strips colour hard
-    "street": dict(chroma=(0.30, 0.88), skin_min=0.45, warm_highlights=False, contrast=(0.88, 1.40), corr=0.93),
+    # (street: its heavy corner vignette darkens whites near the edges on purpose)
+    "street": dict(chroma=(0.30, 0.88), skin_min=0.45, warm_highlights=False, contrast=(0.88, 1.40), corr=0.93,
+                   whites_min=87.5),
     # people & dolls: colour is kept (reds and skin are the point), only greens/blues muted
     # (green/blue-heavy landscapes and fog drop to 0.38-0.5: the muted greens are part of the look)
     "portrait": dict(chroma=(0.35, 1.12), skin_min=0.80, warm_highlights=True, contrast=(0.75, 1.20), corr=0.95,
@@ -93,6 +95,11 @@ OUTPUT_PROFILES = {
 }
 
 LOOK_MODULES = (b"colorbalancergb", b"rgbcurve", b"colorzones")
+# whites kept bright: mean L of the edited image's brightest share equal to the original's share
+# at L >= 95 (rank-based, see analyze()). 200 Sony RAWs (2026-11-11): the old curve tops gave
+# portrait 91.1-92.5 (min-median), the 0.972-0.975 tops give portrait 92.9 / chrome 93.5 / neg 93.6
+# at minimum; street keeps its own floor (PROFILES whites_min) for its heavy vignette.
+WHITES_MIN = 92.5
 
 
 def history_check(edited_bytes):
@@ -223,6 +230,19 @@ def analyze(o_im, e_im, look, edited_bytes=None, ref_stats=None, work=1200, requ
           f"clipped {m['clipped_%'][0]:.2f}% -> {m['clipped_%'][1]:.2f}%")
     check("highlights softened (L p99 not higher)", m["L_p99"][1] <= m["L_p99"][0] + 0.5,
           f"L p99 {m['L_p99'][0]:.1f} -> {m['L_p99'][1]:.1f}", hard=False)
+    # whites stay white: what was near white in the original (L >= 95: white walls, frost,
+    # lace, overcast sky) must not turn paper-grey. The old curve tops (0.935-0.95) put
+    # them at L 90-93 (2026-11-11, user: highlights over-suppressed)
+    # Rank-based (the brightest same share of the edited image), not the same pixel positions:
+    # the baseline and the output are separate renders at different sizes, and a position mask
+    # picks the extreme edge pixels (sky through leaves), reading up to 4 L too dark.
+    wm = Lo >= 95
+    if wm.mean() >= 0.003:
+        k = max(1, int(round(wm.mean() * Le.size)))
+        m["whites_L"] = (float(Lo[wm].mean()), float(np.partition(Le.ravel(), Le.size - k)[-k:].mean()))
+        wmin = prof.get("whites_min", WHITES_MIN)
+        check(f"whites kept bright (mean L >= {wmin})", m["whites_L"][1] >= wmin,
+              f"L {m['whites_L'][0]:.1f} -> {m['whites_L'][1]:.1f} (top {wm.mean() * 100:.1f}% of the frame)")
     # contrast among pixels that were mid-tones in the original (ignores big
     # black areas in night shots whose lift is intentional fade)
     mid = (Lo > 10) & (Lo < 90)

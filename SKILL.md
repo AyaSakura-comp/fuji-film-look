@@ -121,6 +121,7 @@ Command-line knobs (per photo):
 | Image too bright / flat | `--brightness -0.08` |
 | Shadows too heavy / too lifted | `--shadows 0.05` / `-0.05` |
 | Highlights clipping | `--highlights -0.05` |
+| Whites look grey / highlights dull | `--highlights 0.05` (highlight gain). The white point is the curve's top node (0.965–0.975 ≈ L 97–98 since 2026-11-11); never lower it below ~0.97 to stop clipping, use the highlight shoulder instead |
 | Auto exposure wrong for one photo | `--exposure 0.3` / `-0.3` (adds to the auto EV); `--no-auto` to compare with the plain recipe |
 | Auto WB took too much / too little warmth out | change `frac` in `scene.plan()` (amber 0.55–0.85); casts in daylight are never touched |
 | Reds still too bright / too saturated | `--zone red:L=-0.06` / `--zone red:C=-0.10` |
@@ -143,7 +144,7 @@ Editing a look permanently (`LOOKS` dict in `fuji_look.py`):
 | `faded blacks` fails | raise the curve's first node y (perceptual; 0.095 ≈ L 8, 0.135 ≈ L 11) |
 | `no crushed blacks` / murky | raise the second and third curve nodes; lower `contrast` |
 | `mid-tone contrast` too high | lower `contrast` (RAW already gets contrast from sigmoid) or `local_contrast` |
-| `highlight roll-off` (new clipping) | lower `contrast` or highlight tint chroma; keep the last curve node ≤0.95 |
+| `highlight roll-off` (new clipping) | saturated colours near white leave sRGB: strengthen the highlight shoulder `HI_CHROMA` (chroma scale by lightness, 3rd color-zones instance) or lower highlight tint chroma. Keep the last curve node 0.965–0.98: it *is* the white point, and a lower one greys every white (`whites kept bright` fails) |
 | `reds darker` fails | more negative `pre_zone_L` (red/magenta-red; colour zones placed *before* color balance rgb, where reds still have full chroma). `zone_L` after the desaturation barely acts on reds (colour zones weight by chroma) |
 | `greens muted` fails | more negative `zone_C[4]` |
 | street `shadows nearly colourless` fails | more negative `chroma_shadows` / `saturation_shadows` |
@@ -173,6 +174,7 @@ Two tiers (`verify.py` functions, also used by run.py):
 | reds kept (portrait only) | yes* | red C ratio 0.78–1.35, and not darker (fails only if dL rel < −1.5 *and* absolute dL < 0: scenes with few neutral pixels make the relative figure unreliable); replaces the two red checks below |
 | reds darker (vs neutral tones) | yes* | clearly red pixels (C ≥ 28): red-band dL minus the tone curve's own dL at the same L <−0.3. Low-chroma browns (brick, fur, hair) are desaturated, not darkened |
 | reds less saturated / greens muted | yes* | C ratio <0.97 / <0.95 |
+| whites kept bright | yes | pixels at L ≥ 95 in the original (≥0.3% of the frame: white walls, frost, lace, overcast sky) keep a mean L ≥ 92.5 (`WHITES_MIN`; street ≥ 87.5 for its heavy vignette), measured rank-based: the brightest same share of the output, because the baseline and the output are separate renders and a position mask picks edge pixels that read ~4 L too dark |
 | blues, skin/warm tones, shadow/highlight tint, highlights softened | warn | scene-dependent |
 | structure preserved | yes | L correlation on ~256 px block means ≥0.95 (street ≥0.93); catches broken renders, ignores sub-pixel offsets between differently scaled renders |
 | ref match: … (with `--reference`) | warn | fingerprint inside the reference range ± tolerance |
@@ -184,6 +186,7 @@ Plus `lighting_checks()` on every file (see "Different lighting") and the JPEG o
 
 ## Lessons learned (don't re-learn these)
 
+- **Don't buy "no clipping" with a low white point.** Curve tops of 0.935–0.95 made clipping impossible but capped white at L 94–96: on 200 Sony RAWs whites (L ≥ 95 in the source) came out at L 91–92.5 in `portrait` (white walls, frost, lace, overcast sky looked paper-grey; the user saw over-suppressed highlights). Fix (2026-11-11): tops 0.965–0.975 plus a highlight shoulder (`HI_CHROMA`, chroma eased off above L ≈ 60 by lightness) that keeps sunlit saturated colours in sRGB. `whites kept bright` guards it.
 - **Always write an explicit pipeline order.** Without `iop_order_version`, darktable silently uses the **legacy 2.6 order**. `fuji_look.py` writes a custom v5.0 order (RAW and JPEG variants) with `rgbcurve` moved after `vignette`. The film curve then acts on the final display-referred image: after sigmoid tone mapping for RAW (before this change, 14/20 RAWs got crushed blacks), and after the vignette, so the matte floor survives in the corners.
 - Speed: darktable-cli start-up (~4 s) and the grain module (0.7 s/photo) dominate. Never spawn one darktable process per photo in a batch, and never re-enable darktable grain in run.py (see "Why it is fast").
 - Thresholds sitting exactly at the edge of the calibration range flicker with baseline render size (±0.02 chroma ratio). Keep headroom.
