@@ -395,7 +395,8 @@ def write_summary(results, rep, a, timing):
     lines += ["", "## Failure counts (hard)"] + [f"- {k}: {v}" for k, v in sorted(fails.items(), key=lambda x: -x[1])]
     lines += ["", "## Warning counts"] + [f"- {k}: {v}" for k, v in sorted(warns.items(), key=lambda x: -x[1])]
     (rep / "summary.md").write_text("\n".join(lines) + "\n")
-    (rep / "summary.json").write_text(json.dumps(dict(timing=timing, results=results), indent=1, default=str))
+    run = dict(look=a.look, grain=a.grain, size=a.size, quality=a.quality, verify=a.verify, auto=a.auto)  # for gallery.py
+    (rep / "summary.json").write_text(json.dumps(dict(run=run, timing=timing, results=results), indent=1, default=str))
     return lines
 
 

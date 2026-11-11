@@ -1,0 +1,378 @@
+<title>{{title}}</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;700&family=Noto+Serif+TC:wght@600&display=swap">
+<style>
+/* Template for scripts/gallery.py (the double-brace keys and the two JSON blobs are filled in there).
+   Layout: a light table. One large before/after stage on top, the roll's contact sheet underneath.
+   Single dark theme on purpose: photos are judged on a dim, warm-neutral ground. */
+:root {
+  --ground: #121010;
+  --panel: #1c1917;
+  --line: #2e2824;
+  --ink: #ece4d9;
+  --muted: #9c9087;
+  --accent: #b13b45;
+  --gold: #c9a25e;
+  --scrim: rgba(18, 16, 16, 0.72);
+  --f-display: "Noto Serif TC", "Songti TC", "PMingLiU", serif;
+  --f-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+html { background: var(--ground); }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-size: 15px;
+  line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 56px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 28px; }
+.mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 24px; }
+h1 { font-family: var(--f-display); font-weight: 600; font-size: clamp(28px, 5vw, 40px); line-height: 1.2; margin: 0; letter-spacing: 0.06em; text-wrap: balance; overflow-wrap: anywhere; }
+.roll { font-family: var(--f-mono); font-size: 12px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+
+/* ---------- stage ---------- */
+.viewer { display: grid; gap: 14px; }
+.stage {
+  position: relative;
+  margin: 0 auto;
+  aspect-ratio: var(--ar, 3 / 2);
+  width: min(100%, calc(78svh * var(--arn, 1.5)));
+  max-width: 100%;
+  background: #000;
+  overflow: hidden;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: ew-resize;
+}
+.stage[data-mode="a"], .stage[data-mode="b"] { cursor: grab; }
+.stage img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; display: block; pointer-events: none; -webkit-user-drag: none;
+}
+#imgB { clip-path: inset(0 calc(100% - var(--pos, 50%)) 0 0); }
+.stage[data-mode="b"] #imgB { clip-path: none; }
+.stage[data-mode="a"] #imgB { visibility: hidden; }
+.divider {
+  position: absolute; top: 0; bottom: 0; left: var(--pos, 50%);
+  width: 2px; margin-left: -1px; background: var(--ink);
+  box-shadow: 0 0 0 1px var(--scrim);
+  outline: none;
+}
+.knob {
+  position: absolute; top: 50%; left: 50%; width: 38px; height: 38px;
+  transform: translate(-50%, -50%); border-radius: 50%;
+  background: var(--scrim); border: 2px solid var(--ink);
+  display: grid; place-items: center;
+  font-family: var(--f-mono); font-size: 13px; color: var(--ink); letter-spacing: 2px;
+}
+.divider:focus-visible .knob { border-color: var(--gold); box-shadow: 0 0 0 3px var(--scrim); }
+.stage[data-mode="a"] .divider, .stage[data-mode="b"] .divider { display: none; }
+.tag {
+  position: absolute; top: 10px; padding: 3px 8px; border-radius: 2px;
+  font-family: var(--f-mono); font-size: 11px; letter-spacing: 0.06em;
+  background: var(--scrim); color: var(--ink); pointer-events: none;
+}
+.tag-b { left: 10px; }
+.tag-a { right: 10px; }
+.stage[data-mode="a"] .tag-b, .stage[data-mode="b"] .tag-a { display: none; }
+
+/* ---------- controls ---------- */
+.controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; max-width: 760px; width: 100%; margin: 0 auto; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; padding: 3px; background: var(--panel); }
+.seg button, .nav button { font: inherit; color: var(--muted); background: transparent; border: 0; cursor: pointer; }
+.seg button { padding: 6px 14px; border-radius: 999px; font-size: 14px; }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--ground); font-weight: 500; }
+.nav { display: inline-flex; align-items: center; gap: 6px; }
+.nav button {
+  width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line);
+  background: var(--panel); color: var(--ink); font-size: 20px; line-height: 1;
+}
+.nav button:hover, .seg button:hover { color: var(--ink); }
+.seg button[aria-pressed="true"]:hover { color: var(--ground); }
+#count { min-width: 64px; text-align: center; font-size: 13px; color: var(--muted); }
+button:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.info { max-width: 760px; width: 100%; margin: 0 auto; display: grid; gap: 6px; }
+.info-top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+#frame { font-size: 15px; font-weight: 500; letter-spacing: 0.04em; overflow-wrap: anywhere; }
+.chip { font-size: 12px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.chip.flag { border-color: var(--gold); color: var(--gold); }
+#why { margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 14px; display: grid; gap: 2px; }
+#why li::before { content: "— "; color: var(--line); }
+.hint { font-size: 12px; color: var(--muted); }
+@media (hover: none) { .hint .keys { display: none; } }
+
+/* ---------- contact sheet ---------- */
+.sheet { display: grid; gap: 12px; border-top: 1px solid var(--line); padding-top: 20px; }
+.sheet-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 16px; }
+h2 { font-family: var(--f-display); font-weight: 600; font-size: 20px; margin: 0; letter-spacing: 0.04em; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+.cell { display: grid; gap: 4px; padding: 0; border: 0; background: none; color: inherit; cursor: pointer; text-align: left; min-width: 0; }
+.cell .ph { position: relative; aspect-ratio: 4 / 5; background: var(--panel); overflow: hidden; outline: 2px solid transparent; outline-offset: 2px; }
+.cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cell .no { font-family: var(--f-mono); font-size: 11px; color: var(--muted); letter-spacing: 0.06em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell[aria-current="true"] .ph { outline-color: var(--accent); }
+.cell[aria-current="true"] .no { color: var(--ink); }
+.cell .dot { position: absolute; top: 6px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 2px var(--scrim); }
+.cell:focus-visible { outline: none; }
+.cell:focus-visible .ph { outline-color: var(--gold); }
+
+footer { border-top: 1px solid var(--line); padding-top: 16px; color: var(--muted); font-size: 13px; display: grid; gap: 4px; max-width: 72ch; }
+footer p { margin: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .stage img { transition: opacity 120ms ease-out; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>{{title}}</h1>
+    <div class="roll">{{roll}}</div>
+  </header>
+
+  <section class="viewer" aria-label="{{aria_viewer}}">
+    <div class="stage" id="stage" data-mode="s">
+      <img id="imgA" alt="">
+      <img id="imgB" alt="">
+      <span class="tag tag-b" id="tagB">{{before_main}}</span>
+      <span class="tag tag-a">{{after}}</span>
+      <div class="divider" id="divider" role="slider" tabindex="0" aria-label="{{aria_divider}}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><span class="knob" aria-hidden="true">‹›</span></div>
+    </div>
+
+    <div class="controls">
+      <div class="seg" role="group" aria-label="{{aria_modes}}">
+        <button type="button" id="m-b" data-mode="b" aria-pressed="false">{{before_main}}</button>
+        <button type="button" id="m-s" data-mode="s" aria-pressed="true">{{compare}}</button>
+        <button type="button" id="m-a" data-mode="a" aria-pressed="false">{{after}}</button>
+      </div>
+      <div class="nav">
+        <button type="button" id="prev" aria-label="{{prev}}">‹</button>
+        <span id="count" class="mono" aria-live="polite">1 / {{n}}</span>
+        <button type="button" id="next" aria-label="{{next}}">›</button>
+      </div>
+    </div>
+
+    <div class="info">
+      <div class="info-top">
+        <span id="frame" class="mono"></span>
+        <span id="chips"></span>
+      </div>
+      <ul id="why"></ul>
+      <div class="hint">{{hint}}</div>
+    </div>
+  </section>
+
+  <section class="sheet" aria-label="{{sheet}}">
+    <div class="sheet-head">
+      <h2>{{sheet}}</h2>
+      <span class="hint">{{sheet_hint}}</span>
+    </div>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <footer>
+    <p>{{foot_before}}</p>
+    <p>{{foot_after}}</p>
+  </footer>
+</div>
+
+<script id="meta" type="application/json">/*META*/</script>
+<script id="str" type="application/json">/*STR*/</script>
+<script>
+(function () {
+  const META = JSON.parse(document.getElementById("meta").textContent);
+  const S = JSON.parse(document.getElementById("str").textContent);
+  const $ = (id) => document.getElementById(id);
+  const stage = $("stage"), imgA = $("imgA"), imgB = $("imgB"), divider = $("divider");
+  let idx = 0, pos = 50, mode = "s", token = 0;
+  const src = (kind, n) => `img/${kind}/${encodeURIComponent(n)}.jpg`;
+  const fill = (t, o) => t.replace(/\{(\w+)\}/g, (_, k) => (k in o ? o[k] : ""));
+
+  // scene.py's reasons, in Traditional Chinese (other languages show them as written)
+  function zh(line) {
+    let m = line.match(/^exposure ([+-][\d.]+) EV(?::| \()(.*)$/);
+    if (m) {
+      const ev = `曝光 ${m[1]} EV`, why = m[2].trim();
+      let s = why.match(/spotlit subject.*\((\d+)% near-black/);
+      if (s) return `${ev}：聚光場景（畫面 ${s[1]}% 是暗部），依被打光的主體補光，周圍保持暗，留住明暗落差`;
+      if (/toward subject exposure/.test(why)) return `${ev}：室內偏暗，自動提亮（周圍偏暗，部分改依主體曝光）`;
+      if (/^capped: backlit/.test(why)) return `${ev}：逆光，曝光只小幅提高`;
+      if (/^night/.test(why)) return `${ev}：夜景亮處太暗，提亮但保留夜色`;
+      if (/^dim/.test(why)) return `${ev}：室內偏暗，自動提亮`;
+      if (/^underexposed/.test(why)) return `${ev}：曝光不足，自動提亮`;
+      if (/^overexposed/.test(why)) return `${ev}：過曝，自動壓暗`;
+      if (/^dark subject/.test(why)) return `${ev}：主體比亮處暗，自動提亮`;
+      return `${ev}：${why}`;
+    }
+    m = line.match(/^backlit .*local shadow lift (\d+)/);
+    if (m) return `逆光：局部提亮暗部（${m[1]}），天空不動`;
+    if (/^hazy\/flat/.test(line)) return "霧氣或平光、沒有黑色：黑位加深一點";
+    m = line.match(/^(sodium\/tungsten|fluorescent|purple night).* cast C (\d+).*: (\d+)% removed/);
+    if (m) {
+      const what = { "sodium/tungsten": "燈光偏黃", "fluorescent": "日光燈偏綠", "purple night": "夜空偏紫" }[m[1]];
+      return `${what}（色偏 C ${m[2]}），去掉 ${m[3]}%，保留一點氣氛`;
+    }
+    if (/^night: half/.test(line)) return "夜景：少降一半飽和度，燈光保留顏色";
+    if (/^black frame/.test(line)) return "幾乎全黑的畫面（月亮、星星、聚光的小主體）：保持原樣";
+    if (/^low-key/.test(line)) return "低調畫面，亮部曝光正確：保持原樣";
+    if (/^high-key/.test(line)) return "高調畫面（雪、浪、霧、白牆）：保持原樣";
+    if (/^exposure ok/.test(line)) return "曝光剛好，不需修正";
+    m = line.match(/^user exposure ([+-][\d.]+) EV/);
+    if (m) return `手動加 ${m[1]} EV`;
+    return line;
+  }
+  const FLAG_ZH = [
+    ["reds kept", "紅色飽和度略低於檢查門檻"],
+    ["lit subject readable", "主體偏暗"],
+    ["whites kept bright", "白色偏灰"],
+    ["no new clipping", "亮部新增過曝"],
+    ["no clipping", "過曝像素偏多"],
+    ["faded blacks", "黑色沒有變淡"],
+    ["global chroma", "整體飽和度超出範圍"],
+    ["brightness preserved", "整體亮度變化較大"],
+  ];
+  const reason = (w) => (S.lang === "zh" ? zh(w) : w);
+  const flag = (f) => {
+    if (S.lang !== "zh") return f.replace(/\s*\(.*$/, "");
+    const hit = FLAG_ZH.find(([k]) => f.startsWith(k));
+    return hit ? hit[1] : f.replace(/\s*\(.*$/, "");
+  };
+  const chip = (text, cls) => {
+    const c = document.createElement("span");
+    c.className = "chip" + (cls ? " " + cls : "");
+    c.textContent = text;
+    return c;
+  };
+
+  function setPos(p) {
+    pos = Math.max(0, Math.min(100, p));
+    stage.style.setProperty("--pos", pos + "%");
+    divider.setAttribute("aria-valuenow", String(Math.round(pos)));
+  }
+  function setMode(m) {
+    mode = m;
+    stage.dataset.mode = m;
+    document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === m)));
+  }
+  function preload(i) {
+    const m = META[(i + META.length) % META.length];
+    [src("a", m.n), src("b", m.n)].forEach((u) => { const im = new Image(); im.src = u; });
+  }
+
+  function show(i) {
+    idx = (i + META.length) % META.length;
+    const m = META[idx], my = ++token;
+    const a = new Image(), b = new Image();
+    a.src = src("a", m.n); b.src = src("b", m.n);
+    const before = S.before[m.bk] || "";
+    const apply = () => {
+      if (my !== token) return;
+      stage.style.setProperty("--ar", `${m.w} / ${m.h}`);
+      stage.style.setProperty("--arn", (m.w / m.h).toFixed(4));
+      imgA.src = a.src; imgB.src = b.src;
+      imgA.alt = fill(S.alt_a, { n: m.n, look: S.look });
+      imgB.alt = fill(S.alt_b, { n: m.n, before });
+    };
+    Promise.all([a.decode(), b.decode()]).then(apply, apply);
+    $("tagB").textContent = before;
+    $("m-b").textContent = before;
+
+    $("frame").textContent = m.n;
+    $("count").textContent = `${idx + 1} / ${META.length}`;
+    const why = $("why"); why.textContent = "";
+    m.why.forEach((w) => { const li = document.createElement("li"); li.textContent = reason(w); why.appendChild(li); });
+    const chips = $("chips"); chips.textContent = "";
+    const add = (c) => { if (chips.childNodes.length) chips.appendChild(document.createTextNode(" ")); chips.appendChild(c); };
+    if (m.cls) add(chip(S.cls[m.cls] || m.cls));
+    if (m.spot >= 0.5) add(chip(S.spot));
+    if (m.capped) add(chip(S.capped));
+    m.fails.forEach((f) => add(chip(flag(f), "flag")));
+
+    document.querySelectorAll(".cell").forEach((el, k) => el.setAttribute("aria-current", String(k === idx)));
+    if (decodeURIComponent(location.hash.slice(1)) !== m.n) { try { location.replace("#" + encodeURIComponent(m.n)); } catch (e) {} }
+    preload(idx + 1); preload(idx - 1);
+  }
+
+  // contact sheet
+  const grid = $("grid");
+  META.forEach((m, k) => {
+    const cell = document.createElement("button");
+    cell.type = "button"; cell.className = "cell"; cell.setAttribute("aria-label", m.n);
+    const ph = document.createElement("span"); ph.className = "ph";
+    const im = document.createElement("img"); im.loading = "lazy"; im.decoding = "async"; im.alt = ""; im.src = src("t", m.n);
+    ph.appendChild(im);
+    if (m.fails.length) { const d = document.createElement("span"); d.className = "dot"; ph.appendChild(d); }
+    const no = document.createElement("span"); no.className = "no"; no.textContent = m.n;
+    cell.appendChild(ph); cell.appendChild(no);
+    cell.addEventListener("click", () => {
+      show(k);
+      stage.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
+    });
+    grid.appendChild(cell);
+  });
+
+  // dragging the divider / swiping between frames
+  let drag = null;
+  const xToPos = (x) => { const r = stage.getBoundingClientRect(); return ((x - r.left) / r.width) * 100; };
+  stage.addEventListener("pointerdown", (e) => {
+    drag = { x: e.clientX, y: e.clientY, id: e.pointerId, live: e.pointerType === "mouse" };
+    if (mode === "s" && drag.live) { setPos(xToPos(e.clientX)); try { stage.setPointerCapture(e.pointerId); } catch (err) {} }
+  });
+  stage.addEventListener("pointermove", (e) => {
+    if (!drag || drag.id !== e.pointerId || mode !== "s") return;
+    if (!drag.live) {  // touch: move the divider only once the gesture is clearly horizontal
+      const dx = Math.abs(e.clientX - drag.x), dy = Math.abs(e.clientY - drag.y);
+      if (dx > 6 && dx > dy) { drag.live = true; try { stage.setPointerCapture(e.pointerId); } catch (err) {} }
+      else return;
+    }
+    setPos(xToPos(e.clientX));
+  });
+  const end = (e) => {
+    if (!drag || drag.id !== e.pointerId) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (e.type === "pointerup") {
+      if (mode === "s" && !drag.live && Math.abs(dx) < 8 && Math.abs(dy) < 8) setPos(xToPos(e.clientX));  // tap
+      if (mode !== "s" && Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.3) show(idx + (dx < 0 ? 1 : -1));
+    }
+    drag = null;
+  };
+  stage.addEventListener("pointerup", end);
+  stage.addEventListener("pointercancel", end);
+
+  divider.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      e.preventDefault(); e.stopPropagation();
+      setPos(pos + (e.key === "ArrowLeft" ? -1 : 1) * (e.shiftKey ? 1 : 5));
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.target.closest && e.target.closest("input, textarea")) return;
+    if (e.key === "ArrowRight") { e.preventDefault(); show(idx + 1); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); show(idx - 1); }
+    else if (e.key === "1") setMode("b");
+    else if (e.key === "2") setMode("s");
+    else if (e.key === "3") setMode("a");
+  });
+  document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => setMode(b.dataset.mode)));
+  $("prev").addEventListener("click", () => show(idx - 1));
+  $("next").addEventListener("click", () => show(idx + 1));
+
+  const fromHash = () => META.findIndex((m) => m.n === decodeURIComponent(location.hash.slice(1)));
+  window.addEventListener("hashchange", () => { const k = fromHash(); if (k >= 0 && k !== idx) show(k); });
+
+  setPos(50);
+  const start = fromHash();
+  show(start >= 0 ? start : Math.max(0, META.findIndex((m) => m.n === S.start)));
+})();
+</script>

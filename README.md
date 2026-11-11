@@ -5,7 +5,8 @@ An agent skill (Claude Code, pi) that turns photos into Fujifilm-style film look
 1. reads the lighting (night, tungsten/sodium/neon, backlight, spotlit subjects on a dark set, haze, under- or over-exposure) and picks per-photo corrections;
 2. renders the look with `darktable-cli`;
 3. checks the result numerically against the look's signature (faded blacks, no new clipping, whites kept bright, colour shifts), and against your reference photos if you give some;
-4. writes a report with contact sheets.
+4. writes a report with contact sheets;
+5. optionally builds a before/after gallery web page (`gallery.py`): a slider over the camera JPEG (registered to the render) or darktable's default render, with each photo's auto corrections.
 
 把照片（JPEG 或 Sony ARW 等 RAW）用 darktable 調成富士底片風。內建 Classic Chrome、Classic Neg、日系街拍和人像（膚色紅潤，適合人和娃娃）四種風格，會依每張照片的光線自動修正，最後再用數值和縮圖驗證結果。
 
@@ -63,6 +64,7 @@ uv run $S/run.py photo.ARW -o out --look portrait                 # one photo, ~
 uv run $S/run.py ~/Pictures/trip -o out --look classic-chrome     # a folder
 uv run $S/run.py in/ -o out --look street --verify full --reference ref1.jpg ref2.jpg
 python3 $S/scene.py photo.ARW                                     # lighting analysis only, no render
+uv run $S/gallery.py out --title "Trip" --standalone             # before/after page: out/_gallery/index.html
 ```
 
 Outputs are written as `out/<name>_<look>.jpg`: 2048 px long edge by default (`--size 0` gives full resolution), JPEG quality 100 with 4:4:4 chroma, ICC profile and EXIF kept. The report is in `out/_report/`:
@@ -70,6 +72,9 @@ Outputs are written as `out/<name>_<look>.jpg`: 2048 px long edge by default (`-
 - `summary.md`: PASS/FAIL for each check, the auto corrections and why each was made, and timing.
 - `sheet.jpg`: contact sheet of the outputs.
 - `verify_sheet.jpg`: before/after pairs.
+- `summary.json`: the same, machine-readable.
+
+`gallery.py` turns an output folder into a before/after web page (`out/_gallery/`). The "before" is the camera JPEG when you shoot RAW+JPG (registered to the render, since the camera corrects lens distortion), the original for JPEG inputs, or darktable's default render. The web copies are 2048 px with EXIF (and GPS) removed. Without `--standalone` the page is an HTML fragment for Claude's Artifact publishing.
 
 ## Performance
 
@@ -100,6 +105,7 @@ fuji-film-look/
 │   ├── fuji_look.py      looks (LOOKS dict), darktable XMP builder, single-file renderer, darktable-cli lookup + version check
 │   ├── scene.py          per-photo lighting analysis and auto corrections
 │   ├── verify.py         numeric checks (CIELab), reference matching, comparison sheets
+│   ├── gallery.py        before/after gallery page from a run.py output folder (template: gallery.html)
 │   └── batch.py          older one-process-per-photo batch tool
 └── references/recipe.md  module parameters, measurements, test results
 ```

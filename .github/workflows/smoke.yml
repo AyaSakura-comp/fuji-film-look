@@ -54,6 +54,13 @@ jobs:
       - name: Render + verify (classic-chrome, with grain)
         run: uv run scripts/run.py "$RUNNER_TEMP/in" -o "$RUNNER_TEMP/out/chrome" --look classic-chrome --grain --verify full
 
+      - name: Before/after gallery (no camera JPEG -> darktable default render as the before)
+        run: |
+          uv run scripts/gallery.py "$RUNNER_TEMP/out/chrome" --lang en --standalone
+          g="$RUNNER_TEMP/out/chrome/_gallery"
+          test -s "$g/index.html" && grep -q '"bk": "default"' "$g/index.html"
+          test -s "$g/img/a/DSC00018.jpg" && test -s "$g/img/b/DSC00018.jpg" && test -s "$g/img/t/DSC00018.jpg"
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
