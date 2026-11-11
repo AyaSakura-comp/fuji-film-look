@@ -345,6 +345,40 @@ def _black_k(an, dev, q, target_L):
     return float(min((Yq - T) / (1 - T), 0.4 * Yq))  # gentle: big offsets push hazy blue shadows off-hue
 
 
+def spot_weight(an):
+    """0..1: how much the frame is a pool of light (a spotlit subject in a dark
+    surround: spotlit dolls and tables, stage light, candle-lit corners). The
+    dark surround is the picture: a median-based exposure target would lift it
+    to grey and flatten the light falloff. Ramped, not a switch, so frames near
+    the limits do not jump: >=30..45% of the frame near-black (L < 8 in
+    darktable's default render) and a lit subject (L p95 30..40)."""
+    d = (an.get("dark", 0.0) - 0.30) / 0.15
+    s = (L_at(an, 95) - 30.0) / 10.0
+    return float(min(1.0, max(0.0, d)) * min(1.0, max(0.0, s)))
+
+
+SPOT_P95, SPOT_MAX_EV, SPOT_P99_MAX = 60.0, 0.8, 88.0
+
+
+def _spot_blend(an, dev, want, why):
+    """Pool-of-light frames: expose for the lit subject (p95 -> SPOT_P95, at most
+    SPOT_MAX_EV, p99 kept <= SPOT_P99_MAX), never for the median. Blended with the
+    normal underexposure fix by spot_weight()."""
+    w = spot_weight(an)
+    if w <= 0:
+        return dev, want, why, 0.0
+    ws = _solve(an, 95, SPOT_P95)
+    ds = max(0.0, min(ws, SPOT_MAX_EV, _solve(an, 99, SPOT_P99_MAX)))
+    dev = (1 - w) * dev + w * ds
+    want = (1 - w) * want + w * max(ws, 0.0)
+    if w >= 0.5:
+        why = (f"{why.split(' (')[0]}, spotlit subject in a dark surround ({an['dark']:.0%} near-black, "
+               f"L p95 {L_at(an, 95):.0f}): exposed for the subject, surround kept dark")
+    else:
+        why += f", {w:.0%} toward subject exposure (dark surround)"
+    return dev, want, why, round(w, 2)
+
+
 def scene_class(an):
     ev = an.get("ev100")
     if ev is not None:
@@ -358,7 +392,7 @@ def scene_class(an):
 def plan(an, enable=True, amber_min_c=25.0):
     """Auto corrections for one photo (see SKILL.md 'Different lighting')."""
     pl = dict(cls="?", ev=0.0, black=0.0, shadhi=None, wb_xy=None, wb=None, chroma_keep=1.0, shadows_add=0.0,
-              lowkey=False, highkey=False, capped=False, reasons=[], pred={})
+              lowkey=False, highkey=False, capped=False, spot=0.0, reasons=[], pred={})
     if not enable or an.get("kind") == "none":
         if an.get("note"):
             pl["reasons"].append(an["note"])
@@ -368,7 +402,7 @@ def plan(an, enable=True, amber_min_c=25.0):
     lowkey = an["dark"] >= 0.4 and P(99.5) >= 75 and P(95) >= 55
     blackbg = P(95) < 2  # >=95% of the frame black: moon, stars, fireworks, a spotlit object
     pl.update(cls=cls, lowkey=lowkey or blackbg, blackbg=blackbg)
-    dev, want, why = 0.0, 0.0, ""
+    dev, want, why, spot = 0.0, 0.0, "", 0.0
     if blackbg:
         why = "black frame with a small lit subject (moon, stars, spotlight): kept"
     elif lowkey:
@@ -390,6 +424,7 @@ def plan(an, enable=True, amber_min_c=25.0):
             want = max(_solve(an, 95, 60) if P(95) < 60 else 0.0, _solve(an, 50, 25) if P(50) < 22 else 0.0)
             dev = min(want, 1.5, _solve(an, 50, 45))
             why = f"dim interior underexposed (median L {P(50):.0f}, p95 {P(95):.0f})"
+            dev, want, why, spot = _spot_blend(an, dev, want, why)
         elif P(50) > 62:
             dev = max(_solve(an, 50, 56), -1.0)
             why = f"overexposed (median L {P(50):.0f})"
@@ -398,6 +433,7 @@ def plan(an, enable=True, amber_min_c=25.0):
             want = _solve(an, 50, 32)
             dev = min(want, _solve(an, 90, 78) if P(90) < 78 else 0.0, 1.5)
             why = f"underexposed (median L {P(50):.0f}, p95 {P(95):.0f})"
+            # no spotlight blend in daylight: dark forests/shade there are scenery, not a lit pool
         elif P(50) < 28:
             # bright areas are fine (backlight / sky): small lift only, highlights capped
             want = _solve(an, 50, 30)
@@ -411,6 +447,7 @@ def plan(an, enable=True, amber_min_c=25.0):
             why = "high-key frame with real blacks (snow, surf, fog, white walls): kept"
     dev = round(max(dev, 0.0) if why.startswith(("night, lit", "dim", "under", "dark")) else dev, 2)
     pl["capped"] = want > 0 and dev < want - 0.05  # more lift was needed than the limits allow
+    pl["spot"] = spot if dev > 0 or spot >= 0.5 else 0.0
     if abs(dev) >= 0.1:
         pl["ev"] = dev
         pl["reasons"].append(f"exposure {dev:+.2f} EV: {why}")

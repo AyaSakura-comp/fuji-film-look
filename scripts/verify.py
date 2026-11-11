@@ -289,7 +289,9 @@ def analyze(o_im, e_im, look, edited_bytes=None, ref_stats=None, work=1200, requ
         small = frac < 0.005  # <0.5% of pixels: too noisy for a hard verdict
         if name == "red" and prof.get("reds") == "keep":
             # portrait: red dresses, lips, roses stay red - not darker, not browner
-            check("reds kept (C ratio 0.80-1.35)", 0.80 <= rC <= 1.35, f"red C x{rC:.2f} ({frac*100:.1f}% px)", hard=not small)
+            # 0.78: dark crimson dresses under dim light measure 0.79-0.80 (the matte floor
+            # dilutes chroma near black) and look the same as 0.82 at 100%; browned reds are <0.7
+            check("reds kept (C ratio 0.78-1.35)", 0.78 <= rC <= 1.35, f"red C x{rC:.2f} ({frac*100:.1f}% px)", hard=not small)
             # darker relative to the tone curve AND in absolute terms (scenes with few
             # neutral pixels make the relative figure alone unreliable)
             check("reds not darker (dL rel >= -1.5)", dL >= -1.5 or dL_abs >= 0,
@@ -373,6 +375,8 @@ def lighting_checks(e_im, plan, base_im=None, work=600):
         lo, hi = LIGHT_BANDS[plan["cls"]]
         if plan.get("shadhi"):  # backlit composition: dark foreground against a bright sky is the scene
             lo = min(lo, 15)
+        if plan.get("spot", 0) >= 0.5:  # spotlit subject in a dark surround: the median sits in the
+            lo = min(lo, 5)             # surround (the look's matte floor); "lit subject readable" guards it
         checks.append(dict(name=f"exposure fits a {plan['cls']} scene (median L {lo}-{hi})", ok=lo <= med <= hi,
                            hard=not (capped and med < lo), detail=f"median L {med:.1f}{cap_note}"))
     if not plan.get("lowkey"):

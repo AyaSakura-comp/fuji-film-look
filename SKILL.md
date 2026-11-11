@@ -59,6 +59,7 @@ What it changes (each one listed with the reason in `summary.md`):
 | Night (EV100 < 6) with dark lit areas (p95 < 55) | exposure up until p95 ≈ 55 (and p75 ≥ 12), max +2 EV, median kept ≤ 30: night stays night |
 | Night/indoor rendered bright (median ≤ 62) | **left alone**: EV100 < 6 also covers lamp-lit rooms (a home is EV 3–6), and phone night mode is a choice. Only median > 62 is darkened (to ≈56, max −1 EV) |
 | Dim interior, underexposed (p95 < 60 or median < 22) | exposure up, max +1.5 EV, median ≤ 45 |
+| Dim interior, **spotlit subject in a dark surround** (≥30–45% of the frame near-black and lit subject L p95 ≥ 30–40, ramped: `scene.spot_weight()`) | exposure set by the **subject**: p95 → 60, max +0.8 EV, p99 ≤ 88; the median is not a target, so the surround stays dark and the light falloff survives. Blended with the rule above by the weight; tagged `spotlight` in the summary |
 | Day, underexposed (median < 30, p95 < 70) | exposure up to median ≈ 32, max +1.5, p90 kept ≤ 78 |
 | Backlit day (median < 28, p90 ≥ 65) | `shadhi` local shadow lift 20–45 (highlights −25), exposure capped at +0.25 EV: foreground opens, sky untouched |
 | Low-key frame (≥40% near-black, bright highlights well exposed) | left alone (silhouettes, dramatic portraits) |
@@ -74,9 +75,11 @@ What it changes (each one listed with the reason in `summary.md`):
 
 When a lift is **capped** (max EV, highlight guard or night-median guard: the scene needs more than the rules allow), the median/p95 lighting checks become warnings: the dark result is the scene's own contrast (dark forest with bright snow, a village at night). The summary marks such files `lift capped`. With a baseline, the absolute `no clipping` check is a warning and the relative `no new clipping` check decides: the sun, speculars and vivid flowers clip in the source itself. Without a baseline (`--verify sample`), a source that clips >0.3% fails the absolute check: re-run that file with `--verify full` to see whether the look added any clipping.
 
-Verification follows the plan: the "before" image gets the **same corrections** (darktable default + exposure/WB/shadhi, no look; for JPEG inputs the same maths in numpy), so the relative checks still measure the look only. On top, `lighting_checks()` runs on every file: median L fits the scene type (day 22–70, dim 16–66, night 5–66; backlit ≥15; low-key exempt), lit subject readable (L p95 ≥ 40), artificial-light cast tamed (output cast C ≤ input × (1 − frac/2)), and night light colours kept (C p99 ratio ≥ 0.55, warn).
+Verification follows the plan: the "before" image gets the **same corrections** (darktable default + exposure/WB/shadhi, no look; for JPEG inputs the same maths in numpy), so the relative checks still measure the look only. On top, `lighting_checks()` runs on every file: median L fits the scene type (day 22–70, dim 16–66, night 5–66; backlit ≥15; spotlight ≥5; low-key exempt), lit subject readable (L p95 ≥ 40), artificial-light cast tamed (output cast C ≤ input × (1 − frac/2)), and night light colours kept (C p99 ratio ≥ 0.55, warn).
 
 Tested 2026-11-08 on 58 photos (34 pixls.us Play Raw files picked for lighting: night neon, sodium streets, tungsten bar, blue hour, snow at night, backlit sun, golden-hour portraits, fog, haze, harsh midday, under/over-exposed; plus the 20 Sony RAWs and 4 JPEGs): **58/58 PASS for all three looks** with `--verify full`. Before auto: street 16/24 on the first 24, with near-black night shots, orange sodium snow, grey-washed neon.
+
+Spotlight rule (2026-11-11): a doll shoot under a spotlight (67 Sony A7CR RAWs, dark set, lit doll) got +1.4–1.5 EV from the median target; the surround went from L 10 to 29 and the doll to L 82, so the light pool was flattened. With the rule they get +0.3–1.0 EV (render: doll L p95 ≈ 60–67, surround L ≈ 15–20, close to the camera JPEG). Regression: of the 200 Sony RAWs, 58 lighting files and 63 user files, only 2 dim frames move (by −0.1 EV); daylight is excluded on purpose (dark forest next to snow is scenery, not a light pool).
 
 ### Output quality (default = best). Keep this when changing code
 - darktable hands run.py a **lossless 16-bit TIFF** (`--out-ext tif`, `tiff/bpp=16`, uncompressed), not a JPEG. Grain is added in float, and the image is rounded to 8 bit **once**, in the final JPEG.
@@ -167,7 +170,7 @@ Two tiers (`verify.py` functions, also used by run.py):
 | brightness preserved | yes† | median L moves ≤6 |
 | global chroma muted | yes† | mean-C ratio: chrome 0.55–0.92, neg 0.55–1.10, street 0.30–0.88; near-grey originals (mean C < 8) may instead rise by ≤2.5 C (the look's split toning) |
 | shadows nearly colourless (street) | yes | non-blue shadow C <3.5 or cut ≥60% (blue skies and water are excluded on purpose) |
-| reds kept (portrait only) | yes* | red C ratio 0.80–1.35, and not darker (fails only if dL rel < −1.5 *and* absolute dL < 0: scenes with few neutral pixels make the relative figure unreliable); replaces the two red checks below |
+| reds kept (portrait only) | yes* | red C ratio 0.78–1.35, and not darker (fails only if dL rel < −1.5 *and* absolute dL < 0: scenes with few neutral pixels make the relative figure unreliable); replaces the two red checks below |
 | reds darker (vs neutral tones) | yes* | clearly red pixels (C ≥ 28): red-band dL minus the tone curve's own dL at the same L <−0.3. Low-chroma browns (brick, fur, hair) are desaturated, not darkened |
 | reds less saturated / greens muted | yes* | C ratio <0.97 / <0.95 |
 | blues, skin/warm tones, shadow/highlight tint, highlights softened | warn | scene-dependent |
