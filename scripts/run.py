@@ -339,7 +339,8 @@ def write_sheets(results, rep, cols=6):
         d = ImageDraw.Draw(sheet)
         for i, r in enumerate(ok):
             x, y = 10 + (i % cols) * cw, 10 + (i // cols) * (ch + 24)
-            t = Image.open(r["thumb"]); sheet.paste(t, (x, y + 18))
+            t = Image.open(r["thumb"]); t.thumbnail((cw - 10, ch))  # portrait thumbs are 360 tall: fit the cell
+            sheet.paste(t, (x + (cw - 10 - t.size[0]) // 2, y + 18))
             d.text((x, y + 2), f"{r['name'][:38]} [{'PASS' if r['passed'] else 'FAIL'}]",
                    fill=(120, 220, 120) if r["passed"] else (240, 110, 110))
         sheet.save(rep / "sheet.jpg", quality=85)
@@ -352,6 +353,8 @@ def write_sheets(results, rep, cols=6):
         for i, r in enumerate(pairs):
             x, y = 10 + (i % cols2) * cw, 10 + (i // cols2) * (ch + 24)
             b, e = Image.open(r["thumb_base"]), Image.open(r["thumb"])
+            half = (cw - 16) // 2
+            b.thumbnail((half, ch)); e.thumbnail((half, ch))
             sheet.paste(b, (x, y + 18)); sheet.paste(e, (x + b.size[0] + 6, y + 18))
             d.text((x, y + 2), f"{r['name'][:40]} [{'PASS' if r['passed'] else 'FAIL'}]  before -> after",
                    fill=(120, 220, 120) if r["passed"] else (240, 110, 110))

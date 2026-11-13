@@ -16,11 +16,13 @@ For every photo in OUT_DIR/_report/summary.json it writes
   GALLERY_DIR/index.html         slider / before / after viewer, contact sheet, the auto
                                  corrections per photo (why), and the frames verify flagged
 
-"Before" (--before auto, default): the camera JPEG next to the RAW (RAW+JPG shooting) when one
-exists and has the same framing; else the input itself for JPEG/PNG/TIFF inputs; else
+"Before" (--before auto, default): the camera JPEG of the RAW (RAW+JPG shooting: same folder,
+--camera-dir, the RAW folder's parent, or ../JPG) when one exists and has the same framing; else the input itself for JPEG/PNG/TIFF inputs; else
 darktable's default render of the RAW (no look, no corrections), rendered here. Camera JPEGs are
-lens-corrected and ~1% larger in scale than the RAW render, so each one is registered to the
-render (scale + shift from phase correlation) and both are cropped by the same 1-2% margin.
+lens-corrected and 0.5-3.5% larger in scale than the RAW render, so each one is registered to
+the render (scale + radial lens term + shift, fitted by phase correlation on a 5x5 patch grid;
+frames without texture borrow the median model of frames at the same focal length) and both
+are cropped by the same 1-3% margin.
 --before default always uses darktable's default render; --before camera never renders.
 
 Web copies are re-encoded (quality 85) with no EXIF, so no GPS or serial numbers are published.
@@ -104,46 +106,91 @@ def _shift(pa, pb):
     return [v if v <= s // 2 else v - s for v, s in zip(i, c.shape)], c.max()
 
 
+GRID = (0.08, 0.29, 0.5, 0.71, 0.92)
+
+
+def _model(R, wts, nr):
+    """Least squares for d = X*(k + k2*r^2) + t (both axes, shared k, k2)."""
+    X, Y, r2 = R[:, 1], R[:, 0], (R[:, 0] ** 2 + R[:, 1] ** 2) / nr ** 2
+    M = np.zeros((2 * len(R), 4))
+    v = np.zeros(2 * len(R))
+    M[0::2, 0], M[0::2, 1], M[0::2, 2], v[0::2] = X, X * r2, 1, R[:, 3]
+    M[1::2, 0], M[1::2, 1], M[1::2, 3], v[1::2] = Y, Y * r2, 1, R[:, 2]
+    w2 = np.repeat(wts, 2)
+    sol, *_ = np.linalg.lstsq(M * w2[:, None], v * w2, rcond=None)
+    res = np.abs(M @ sol - v).reshape(-1, 2).max(1)
+    return sol, res
+
+
 def register(a, b, patch=256):
-    """Uniform scale + shift mapping b onto a, fitted on a 3x3 grid of patches; None if unreliable."""
-    A = np.asarray(a.convert("L"), float)
-    B = np.asarray(b.convert("L"), float)
+    """Map the camera JPEG b onto the render a: scale + radial (lens-distortion) term + shift,
+    d(p) = (p - c) * (k + k2 * r^2) + t, so that b[p + d] ~ a[p]. Fitted on a 5x5 grid of patches
+    by phase correlation (night frames: dark patches still correlate, so no brightness gate beyond
+    'not flat'), with outlier rejection. Camera JPEGs differ from darktable's render by 0.5-3.5% in
+    scale and by the lens-distortion correction, which a uniform scale cannot follow. None if
+    unreliable."""
+    A = np.sqrt(np.asarray(a.convert("L"), float))  # sqrt: lift dark night patches
+    B = np.sqrt(np.asarray(b.convert("L"), float))
     h, w = A.shape
-    cy, cx = h / 2, w / 2
-    patch = min(patch, h // 3, w // 3)
+    cy, cx, nr = h / 2, w / 2, math.hypot(w, h) / 2
+    patch = min(patch, h // 4, w // 4)
     rows = []
-    for fy in (0.12, 0.5, 0.88):
-        for fx in (0.12, 0.5, 0.88):
-            y0 = max(0, int(fy * h - patch / 2))
-            x0 = max(0, int(fx * w - patch / 2))
+    for fy in GRID:
+        for fx in GRID:
+            y0 = min(max(0, int(fy * h - patch / 2)), h - patch)
+            x0 = min(max(0, int(fx * w - patch / 2)), w - patch)
             pa, pb = A[y0:y0 + patch, x0:x0 + patch], B[y0:y0 + patch, x0:x0 + patch]
-            if pa.std() < 3:  # flat or black patch: nothing to match
+            if pa.std() < 0.15 or pb.std() < 0.15:  # flat (black sky, blown sign): nothing to match
                 continue
             (dy, dx), pk = _shift(pa, pb)
-            if pk < 0.08 or abs(dy) > 60 or abs(dx) > 60:
+            if pk < 0.06 or abs(dy) > 90 or abs(dx) > 90:
                 continue
             rows.append((y0 + patch / 2 - cy, x0 + patch / 2 - cx, dy, dx, pk))
-    if len(rows) < 4:
-        return None
     R = np.array(rows)
-    # dx = k*(x-cx) + tx ; dy = k*(y-cy) + ty  (one k), weighted by peak strength
-    M = np.zeros((2 * len(R), 3))
-    v = np.zeros(2 * len(R))
-    wts = np.repeat(R[:, 4], 2)
-    M[0::2, 0], M[0::2, 1], v[0::2] = R[:, 1], 1, R[:, 3]
-    M[1::2, 0], M[1::2, 2], v[1::2] = R[:, 0], 1, R[:, 2]
-    sol, *_ = np.linalg.lstsq(M * wts[:, None], v * wts, rcond=None)
-    k, tx, ty = sol
-    if abs(k) > 0.05 or np.abs(M @ sol - v).max() > 6:
+    for _ in range(3):  # fit, drop the worst outliers, refit
+        if len(R) < 6:
+            return None
+        sol, res = _model(R, R[:, 4], nr)
+        keep = res <= max(2.5, 2.5 * np.median(res))
+        if keep.all():
+            break
+        R = R[keep]
+    k, k2, tx, ty = sol
+    if len(R) < 6 or res.max() > 3 or abs(k) > 0.06 or abs(k2) > 0.06:
         return None
-    return dict(s=1 + k, tx=tx, ty=ty)
+    return dict(k=float(k), k2=float(k2), tx=float(tx), ty=float(ty), n=len(R), s=1 + float(k + k2 / 2))
 
 
-def warp(b, p):
+def _disp(p, x, y, w, h):
+    nr = math.hypot(w, h) / 2
+    X, Y = x - w / 2, y - h / 2
+    f = p["k"] + p["k2"] * (X * X + Y * Y) / nr ** 2
+    return X * f + p["tx"], Y * f + p["ty"]
+
+
+def warp(b, p, cells=24):
+    """Resample b at p + d(p) for every output pixel p (PIL mesh of small quads)."""
     w, h = b.size
-    s = p["s"]
-    data = (s, 0, (1 - s) * w / 2 + p["tx"], 0, s, (1 - s) * h / 2 + p["ty"])
-    return b.transform(b.size, Image.AFFINE, data, resample=Image.BICUBIC)
+    xs = np.linspace(0, w, cells + 1)
+    ys = np.linspace(0, h, cells + 1)
+    mesh = []
+    for i in range(cells):
+        for j in range(cells):
+            x0, x1, y0, y1 = xs[j], xs[j + 1], ys[i], ys[i + 1]
+            quad = []
+            for x, y in ((x0, y0), (x0, y1), (x1, y1), (x1, y0)):  # UL, LL, LR, UR
+                dx, dy = _disp(p, x, y, w, h)
+                quad += [x + dx, y + dy]
+            mesh.append(((round(x0), round(y0), round(x1), round(y1)), quad))
+    return b.transform(b.size, Image.MESH, mesh, resample=Image.BICUBIC)
+
+
+def margins(p, w, h):
+    """Crop (x, y) that keeps only pixels the warped image really covers, same on both sides."""
+    t = np.linspace(0, 1, 33)
+    mx = max(abs(_disp(p, x, y * h, w, h)[0]) for x in (0, w) for y in t)
+    my = max(abs(_disp(p, x * w, y, w, h)[1]) for y in (0, h) for x in t)
+    return math.ceil(mx) + 2, math.ceil(my) + 2
 
 
 # ------------------------------------------------------------------ frames ---
@@ -161,12 +208,16 @@ def oriented_size(path):
     return w, h
 
 
-def camera_jpeg(src):
+def camera_jpeg(src, extra=()):
+    """The camera JPEG of a RAW: same folder, --camera-dir, the parent folder (RAWs sorted into a
+    RAW/ subfolder) or a sibling JPG/JPEG folder."""
     p = Path(src)
-    for ext in JPG_EXT:
-        c = p.with_suffix(ext)
-        if c.exists() and c != p:
-            return c
+    up = p.parent.parent
+    for d in (p.parent, *extra, up, up / "JPG", up / "JPEG", up / "jpg"):
+        for ext in JPG_EXT:
+            c = Path(d) / (p.stem + ext)
+            if c.exists() and c.resolve() != p.resolve():
+                return c
     return None
 
 
@@ -174,19 +225,41 @@ def one(job):
     a = fit(Image.open(job["final"]).convert("RGB"), job["long"])
     b = Image.open(job["before"])
     b.draft("RGB", (a.width * 2, a.height * 2))
+    try:
+        focal = float(b.getexif().get_ifd(0x8769).get(0x920A) or 0)  # FocalLength: same lens setting
+    except Exception:
+        focal = 0.0
     b = ImageOps.exif_transpose(b).convert("RGB").resize(a.size, Image.LANCZOS)  # same grid as the after
-    p = register(a, b) if job["kind"] == "camera" else None
+    p = job.get("p") or (register(a, b) if job["kind"] == "camera" else None)
     if p:
         b = warp(b, p)
         w, h = a.size
-        mx = math.ceil(abs(p["s"] - 1) * w / 2 + abs(p["tx"])) + 2
-        my = math.ceil(abs(p["s"] - 1) * h / 2 + abs(p["ty"])) + 2
+        mx, my = margins(p, w, h)
         a, b = a.crop((mx, my, w - mx, h - my)), b.crop((mx, my, w - mx, h - my))  # no empty edges
     g = Path(job["gdir"]) / "img"
     a.save(g / "a" / f"{job['n']}.jpg", quality=Q, optimize=True, progressive=True)
     b.save(g / "b" / f"{job['n']}.jpg", quality=Q, optimize=True, progressive=True)
     fit(a, THUMB).save(g / "t" / f"{job['n']}.jpg", quality=78, optimize=True, progressive=True)
-    return job["n"], a.size, (round(p["s"], 4) if p else None)
+    return dict(n=job["n"], size=a.size, al=round(p["s"], 4) if p else None, p=p, focal=focal,
+                borrowed=bool(job.get("p")))
+
+
+def process(jobs, workers):
+    """Render every frame; camera frames that could not be registered (black night sky, motion,
+    no texture) get the median lens model of registered frames at the same focal length."""
+    with ProcessPoolExecutor(workers) as ex:
+        done = {r["n"]: r for r in ex.map(one, jobs)}
+        fixed = []
+        for j in jobs:
+            r = done[j["n"]]
+            if j["kind"] != "camera" or r["p"] or not r["focal"]:
+                continue
+            same = [o["p"] for o in done.values() if o["p"] and not o["borrowed"]
+                    and abs(o["focal"] - r["focal"]) <= 0.03 * r["focal"]]
+            if len(same) >= 3:
+                fixed.append(dict(j, p={k: float(np.median([q[k] for q in same])) for k in ("k", "k2", "tx", "ty", "s")}))
+        done.update({r["n"]: r for r in ex.map(one, fixed)})
+    return done
 
 
 def render_defaults(items, size, work):
@@ -248,6 +321,8 @@ def main():
     ap.add_argument("--before", choices=["auto", "camera", "default"], default="auto")
     ap.add_argument("--title", help="page title (default: the input folder name)")
     ap.add_argument("--lang", choices=["zh", "en"], default="zh", help="page language (zh = Traditional Chinese)")
+    ap.add_argument("--camera-dir", action="append", default=[],
+                    help="folder with the camera JPEGs (default: next to the RAW, its parent, ../JPG)")
     ap.add_argument("--start", help="photo name shown first (default: the first)")
     ap.add_argument("--long", type=int, default=2048, help="long edge of the web copies (px)")
     ap.add_argument("--standalone", action="store_true", help="full HTML document (not an Artifact fragment)")
@@ -284,7 +359,7 @@ def main():
         if not raw:
             it["before"], it["kind"] = r["src"], "source"
         elif a.before != "default":
-            cj = camera_jpeg(r["src"])
+            cj = camera_jpeg(r["src"], [Path(d).expanduser() for d in a.camera_dir])
             if cj:
                 (w1, h1), (w2, h2) = oriented_size(cj), oriented_size(r["final"])
                 if abs(w1 / h1 - w2 / h2) < 0.015 * (w2 / h2):  # same framing (not a 16:9 / crop-mode JPEG)
@@ -299,20 +374,19 @@ def main():
             # read the renders before the temp folder goes away
             jobs = [dict(n=it["name"], final=it["final"], before=it["before"], kind=it["kind"], long=a.long,
                          gdir=str(gdir)) for it in items if it["before"]]
-            with ProcessPoolExecutor(a.workers) as ex:
-                done = {n: (sz, al) for n, sz, al in ex.map(one, jobs)}
+            done = process(jobs, a.workers)
     else:
         jobs = [dict(n=it["name"], final=it["final"], before=it["before"], kind=it["kind"], long=a.long,
                      gdir=str(gdir)) for it in items if it["before"]]
-        with ProcessPoolExecutor(a.workers) as ex:
-            done = {n: (sz, al) for n, sz, al in ex.map(one, jobs)}
+        done = process(jobs, a.workers)
     skipped = [it["name"] for it in items if it["name"] not in done]
 
     meta = []
     for it in items:
         if it["name"] not in done:
             continue
-        r, (sz, al) = it["r"], done[it["name"]]
+        r, d = it["r"], done[it["name"]]
+        sz, al = d["size"], d["al"]
         p = r.get("plan") or {}
         fails = [c["name"] for c in r.get("checks", []) if c.get("hard") and not c.get("ok", True)]
         if r.get("error"):
@@ -325,7 +399,10 @@ def main():
         sys.exit("no frames: every photo lacked a usable 'before' (try --before default)")
 
     # page
-    title = a.title or Path(res[0]["src"]).parent.name or out.name
+    folder = Path(res[0]["src"]).parent
+    if folder.name.lower() in ("raw", "raws", "arw") and folder.parent.name:
+        folder = folder.parent  # .../0929熊本商店街/RAW -> 0929熊本商店街
+    title = a.title or folder.name or out.name
     home = str(Path.home())
     out_txt = str(out).replace(home, "~", 1) if str(out).startswith(home) else str(out)
     T = {**S, "title": title, "look": look, "n": len(meta),
@@ -356,8 +433,10 @@ def main():
           + (f"; skipped (no before): {', '.join(skipped)}" if skipped else ""))
     aligned = [m["al"] for m in meta if m["al"]]
     if aligned:
+        nb = sum(d["borrowed"] for d in done.values())
         print(f"camera JPEGs registered: {len(aligned)}/{sum(m['bk'] == 'camera' for m in meta)} "
-              f"(scale {min(aligned):.4f}-{max(aligned):.4f})")
+              f"(scale {min(aligned):.4f}-{max(aligned):.4f}"
+              + (f"; {nb} with the lens model of other frames at the same focal length" if nb else "") + ")")
     if 3 * len(meta) > 255:
         print(f"note: {3 * len(meta)} image files; an Artifact publish takes 255, so publish in parts to the same url")
 

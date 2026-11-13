@@ -74,7 +74,7 @@ Outputs are written as `out/<name>_<look>.jpg`: 2048 px long edge by default (`-
 - `verify_sheet.jpg`: before/after pairs.
 - `summary.json`: the same, machine-readable.
 
-`gallery.py` turns an output folder into a before/after web page (`out/_gallery/`). The "before" is the camera JPEG when you shoot RAW+JPG (registered to the render, since the camera corrects lens distortion), the original for JPEG inputs, or darktable's default render. The web copies are 2048 px with EXIF (and GPS) removed. Without `--standalone` the page is an HTML fragment for Claude's Artifact publishing.
+`gallery.py` turns an output folder into a before/after web page (`out/_gallery/`). The "before" is the camera JPEG when you shoot RAW+JPG (found next to the RAW, in its parent folder or `--camera-dir`; registered to the render with a scale + lens-distortion model, since the camera corrects lens distortion), the original for JPEG inputs, or darktable's default render. The web copies are 2048 px with EXIF (and GPS) removed. Without `--standalone` the page is an HTML fragment for Claude's Artifact publishing.
 
 ## Performance
 
