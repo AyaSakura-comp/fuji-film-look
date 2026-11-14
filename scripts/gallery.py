@@ -62,7 +62,7 @@ STR = {
         aria_modes="顯示方式", prev="上一張", next="下一張", sheet="整卷 {n} 張",
         sheet_hint="點縮圖放上燈箱 · <span class=\"mono\">●</span> 自動檢查有提醒",
         hint="拖曳照片移動分隔線；只看單張時左右滑動換張。<span class=\"keys\">鍵盤：← → 換張，1 2 3 切換顯示方式。</span>",
-        cls_day="白天", cls_dim="室內弱光", cls_night="夜景", spot="聚光", capped="提亮有上限",
+        cls_day="白天", cls_dim="室內弱光", cls_night="夜景", spot="聚光", capped="提亮有上限", signs="招牌高光壓回",
         alt_a="{n}，{look} 成品", alt_b="{n}，{before}",
         f_camera="Before：相機直出的 JPG。相機會做鏡頭校正，比例和 RAW 成品差約 1%，已逐張對齊並同樣裁掉邊緣 1–2%。",
         f_source="Before：原圖（JPEG/PNG/TIFF 輸入）。",
@@ -79,7 +79,7 @@ STR = {
         sheet_hint="Click a thumbnail to view it · <span class=\"mono\">●</span> flagged by the checks",
         hint="Drag across the photo to move the divider; swipe to change photo in single view."
              "<span class=\"keys\"> Keys: ← → change photo, 1 2 3 switch view.</span>",
-        cls_day="day", cls_dim="dim interior", cls_night="night", spot="spotlight", capped="lift capped",
+        cls_day="day", cls_dim="dim interior", cls_night="night", spot="spotlight", capped="lift capped", signs="signs recovered",
         alt_a="{n}, {look}", alt_b="{n}, {before}",
         f_camera="Before: the camera JPEG. The camera corrects lens distortion, so its scale differs from the RAW "
                  "render by ~1%; every pair is registered and both are cropped by the same 1–2% margin.",
@@ -393,6 +393,7 @@ def main():
             fails.append(r["error"])
         meta.append(dict(n=it["name"], w=sz[0], h=sz[1], al=al, bk=it["kind"], ok=bool(r.get("passed")),
                          cls=p.get("cls"), ev=p.get("ev", 0), spot=p.get("spot", 0), capped=bool(p.get("capped")),
+                         signs=p.get("signs", 0),
                          why=p.get("reasons", []), fails=fails))
     kinds = sorted({m["bk"] for m in meta}, key=["camera", "source", "default"].index)
     if not meta:
@@ -415,7 +416,7 @@ def main():
     start = a.start if a.start and any(m["n"] == a.start for m in meta) else meta[0]["n"]
     js = dict(lang=a.lang, look=look, start=start, before={k: S["before_" + k] for k in kinds},
               cls={"day": S["cls_day"], "dim": S["cls_dim"], "night": S["cls_night"]}, spot=S["spot"],
-              capped=S["capped"], alt_a=S["alt_a"], alt_b=S["alt_b"])
+              capped=S["capped"], signs=S["signs"], alt_a=S["alt_a"], alt_b=S["alt_b"])
     page = (HERE / "gallery.html").read_text()
     raw_keys = {"sheet_hint", "hint", "foot_before", "foot_after"}  # already HTML
     page = re.sub(r"\{\{(\w+)\}\}", lambda m: str(T[m.group(1)]) if m.group(1) in raw_keys

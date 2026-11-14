@@ -35,6 +35,9 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageOps
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import fuji_look as FL  # noqa: E402  (stdlib only: sign-recovery constants)
+
 RAW_EXT = {".arw", ".cr2", ".cr3", ".nef", ".raf", ".dng", ".orf", ".rw2", ".pef", ".srw", ".nrw", ".3fr", ".iiq"}
 _TYPES = {1: ("B", 1), 2: ("s", 1), 3: ("H", 2), 4: ("I", 4), 5: ("II", 8), 6: ("b", 1), 7: ("B", 1),
           8: ("h", 2), 9: ("i", 4), 10: ("ii", 8), 11: ("f", 4), 12: ("d", 8), 13: ("I", 4)}
@@ -252,17 +255,31 @@ def white_estimates(lin):
 
 
 # ----------------------------------------------------------- analysis ---
-def _small_linear_raw(path, target=400):
+# brightness thresholds (log2 scene-linear after darktable's default exposure) at which
+# analyze() records the share of brighter pixels (full half-size resolution, so a small
+# lit sign counts); scene.sign_weight() reads it at -1 EV (~L 78) after the plan's exposure
+BRIGHT_X = tuple(-3.0 + 0.25 * i for i in range(17))
+
+
+def _small_linear_raw(path, bias=0.0, target=400):
+    """(small linear image, clipped share, bright shares). clipped = share of half-size
+    pixels with a channel at the clip point (sensor saturation, or a channel pushed past
+    it by the camera WB): blown light sources, which darktable reconstructs flat.
+    bright = share of half-size pixels above each BRIGHT_X level."""
     import rawpy  # only needed for RAW analysis
     with rawpy.imread(str(path)) as r:
         a = r.postprocess(half_size=True, use_camera_wb=True, no_auto_bright=True, gamma=(1, 1),
                           output_bps=16, user_flip=0)
     if max(a.shape[:2]) >= 4 * target:  # statistics only: every 2nd pixel is plenty (4x less work)
         a = a[::2, ::2]
+    clip = float((a.max(-1) >= 64200).mean())
+    Y = _lum(a.astype(np.float32)) * np.float32(2 ** (0.7 - bias) / 65535.0)
+    Ysort = np.sort(Y, axis=None)
+    bright = [float(1 - np.searchsorted(Ysort, 2 ** t, side="right") / Ysort.size) for t in BRIGHT_X]
     h, w = a.shape[:2]
     k = max(1, max(h, w) // target)
     a = a[:h // k * k, :w // k * k].reshape(h // k, k, w // k, k, 3).mean((1, 3), dtype=np.float32)
-    return a * np.float32(1 / 65535.0)
+    return a * np.float32(1 / 65535.0), clip, bright
 
 
 def analyze(path):
@@ -274,13 +291,13 @@ def analyze(path):
             exif, _, _ = read_meta(p, head=4 << 20)
             bias = float(exif.get("bias") or 0.0)
             try:
-                lin = _small_linear_raw(p)
+                lin, clip, bright = _small_linear_raw(p, bias)
             except Exception as e:  # unsupported by LibRaw: no auto plan
                 out.update(ev100=ev100(exif), note=f"raw decode failed ({type(e).__name__})")
                 return out
             Ys = _lum(lin) * 2 ** (0.7 - bias)  # what darktable's default exposure does
             x = np.log2(np.maximum(Ys, 1e-7))
-            out.update(kind="raw", bias=bias, xq=[float(np.percentile(x, q)) for q in Q])
+            out.update(kind="raw", bias=bias, clip=clip, bright=bright, xq=[float(np.percentile(x, q)) for q in Q])
             Lpix = np.interp(x, TONE_X, TONE_Y)
         else:
             im = Image.open(p)
@@ -392,7 +409,7 @@ def scene_class(an):
 def plan(an, enable=True, amber_min_c=25.0):
     """Auto corrections for one photo (see SKILL.md 'Different lighting')."""
     pl = dict(cls="?", ev=0.0, black=0.0, shadhi=None, wb_xy=None, wb=None, chroma_keep=1.0, shadows_add=0.0,
-              lowkey=False, highkey=False, capped=False, spot=0.0, reasons=[], pred={})
+              lowkey=False, highkey=False, capped=False, spot=0.0, signs=0.0, reasons=[], pred={})
     if not enable or an.get("kind") == "none":
         if an.get("note"):
             pl["reasons"].append(an["note"])
@@ -505,10 +522,48 @@ def plan(an, enable=True, amber_min_c=25.0):
             label = {"amber": "sodium/tungsten", "green": "fluorescent", "purple": "purple night (AWB/mixed light)"}[kind]
             pl["reasons"].append(f"{label} cast C {C:.0f} "
                                  f"(a {casts[i_med][0]:+.0f}, b {casts[i_med][1]:+.0f}): {frac:.0%} removed")
+    # lit signs / light boxes: blown in the default render (white slabs, lettering gone,
+    # orange signs pale) although the RAW keeps the lettering below the clip point
+    w = sign_weight(an, cls, pl["ev"])
+    if w > 0:
+        pl["signs"] = w
+        pl["reasons"].append(f"lit signs / light boxes blown ({an['clip']:.2%} of the RAW clipped): "
+                             f"areas brighter than white compressed up to {FL.SIGN_BANDS[-1] * w:.1f} EV "
+                             f"(tone equalizer) so lettering and sign colours read")
     if cls == "night":
         pl["chroma_keep"] = 0.5
         pl["reasons"].append("night: half of the look's global/highlight desaturation kept off (lights keep colour)")
+    elif w > 0 and P(50, pl["ev"]) < 40:
+        # a lit street at EV 6-9.5 is 'dim' by EXIF, but its colours are signs and lamps too.
+        # Only when the lights are a real share of the frame (>= 0.15-0.35% clipped): a
+        # spotlit doll set with one small lamp keeps the look's colour as it is
+        k = 0.5 * w * min(1.0, max(0.0, (an["clip"] - 0.0015) / 0.002))
+        if k >= 0.05:
+            pl["chroma_keep"] = round(1 - k, 2)
+            pl["reasons"].append(f"dim street with lit signs: {k:.0%} of the look's global/highlight "
+                                 f"desaturation kept off (signs keep colour)")
     return pl
+
+
+# sign recovery (fuji_look.p_toneequal), both ramps 0 -> full strength:
+SIGN_CLIP = (0.0005, 0.0015)   # share of the RAW clipped
+SIGN_RATIO = (0.10, 0.20)      # clipped share / share brighter than ~L 78
+
+
+def sign_weight(an, cls, ev=0.0):
+    """0..1: how much sign recovery a night/dim RAW gets. Two conditions:
+    some of the RAW is clipped, and the clipped pixels are a real part of what is bright
+    in the frame (light boxes, lamps). A spotlit doll in a white dress is a large bright
+    area with almost nothing clipped (ratio 0.02-0.07 on the Halloween set): no recovery,
+    the dress keeps its white. Kumamoto night streets: ratio median 0.42, 137/149 frames
+    get recovery (the arcade sign of DSC05031 is only 0.3% of the frame, ratio 0.24).
+    Daylight is left alone (a clipped sky or sun is not lettering)."""
+    if an.get("kind") != "raw" or cls not in ("night", "dim") or "bright" not in an:
+        return 0.0
+    ramp = lambda v, lo, hi: min(1.0, max(0.0, (v - lo) / (hi - lo)))
+    bright = float(np.interp(-1.0 - ev, BRIGHT_X, an["bright"]))
+    ratio = an["clip"] / max(bright, 1e-6)
+    return round(ramp(an["clip"], *SIGN_CLIP) * ramp(ratio, *SIGN_RATIO), 2)
 
 
 def apply_plan_rgb(img, pl):

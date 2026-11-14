@@ -388,7 +388,8 @@ def write_summary(results, rep, a, timing):
         auto = ", ".join(x for x in (f"{pl['ev']:+.1f} EV" if pl.get("ev") else "",
                                      f"WB {pl['wb']['kind']} -{pl['wb']['frac']:.0%}" if pl.get("wb") else "",
                                      "low-key" if pl.get("lowkey") else "", "high-key" if pl.get("highkey") else "",
-                                     "spotlight" if pl.get("spot", 0) >= 0.5 else "", "lift capped" if pl.get("capped") else "") if x)
+                                     "spotlight" if pl.get("spot", 0) >= 0.5 else "", "lift capped" if pl.get("capped") else "",
+                                     f"signs {pl['signs']:.0%}" if pl.get("signs") else "") if x)
         lines.append(f"| {r['name']} | {'PASS' if r['passed'] else 'FAIL'} | {'full' if r.get('full_verify') else 'abs'} | "
                      f"{pl.get('cls', '')} | {auto} | "
                      f"{m.get('out_L_p1', 0):.1f} | {m.get('out_mean_chroma', 0):.1f} | {cr} | {sr} | {', '.join(f)} | {', '.join(w)} |")

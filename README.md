@@ -2,7 +2,7 @@
 
 An agent skill (Claude Code, pi) that turns photos into Fujifilm-style film looks with **darktable**. It takes JPEG/PNG/TIFF or camera RAW (Sony ARW, NEF, CR3, RAF, DNG, …). For each photo it:
 
-1. reads the lighting (night, tungsten/sodium/neon, backlight, spotlit subjects on a dark set, haze, under- or over-exposure) and picks per-photo corrections;
+1. reads the lighting (night, tungsten/sodium/neon, blown light boxes and signs, backlight, spotlit subjects on a dark set, haze, under- or over-exposure) and picks per-photo corrections;
 2. renders the look with `darktable-cli`;
 3. checks the result numerically against the look's signature (faded blacks, no new clipping, whites kept bright, colour shifts), and against your reference photos if you give some;
 4. writes a report with contact sheets;

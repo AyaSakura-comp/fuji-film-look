@@ -224,6 +224,10 @@ footer p { margin: 0; }
       return `${what}（色偏 C ${m[2]}），去掉 ${m[3]}%，保留一點氣氛`;
     }
     if (/^night: half/.test(line)) return "夜景：少降一半飽和度，燈光保留顏色";
+    m = line.match(/^lit signs .*\(([\d.]+)% of the RAW clipped\).*up to (-[\d.]+) EV/);
+    if (m) return `招牌、燈箱過曝（RAW 有 ${m[1]}% 過曝）：比白還亮的部分最多壓回 ${m[2].slice(1)} EV，讓招牌的字和顏色看得見`;
+    m = line.match(/^dim street with lit signs: (\d+)%/);
+    if (m) return `有招牌燈光的街景：少降 ${m[1]}% 飽和度，招牌保留顏色`;
     if (/^black frame/.test(line)) return "幾乎全黑的畫面（月亮、星星、聚光的小主體）：保持原樣";
     if (/^low-key/.test(line)) return "低調畫面，亮部曝光正確：保持原樣";
     if (/^high-key/.test(line)) return "高調畫面（雪、浪、霧、白牆）：保持原樣";
@@ -297,6 +301,7 @@ footer p { margin: 0; }
     if (m.cls) add(chip(S.cls[m.cls] || m.cls));
     if (m.spot >= 0.5) add(chip(S.spot));
     if (m.capped) add(chip(S.capped));
+    if (m.signs >= 0.5) add(chip(S.signs));
     m.fails.forEach((f) => add(chip(flag(f), "flag")));
 
     document.querySelectorAll(".cell").forEach((el, k) => el.setAttribute("aria-current", String(k === idx)));

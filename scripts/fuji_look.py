@@ -17,6 +17,7 @@ import base64
 import os
 import re
 import shutil
+import math
 import struct
 import subprocess
 import sys
@@ -334,6 +335,27 @@ def p_shadhi(shadows, highlights):
                        unbound, 0.000001, 1)
 
 
+# Sign recovery (night/dim RAWs with blown light boxes, scene.sign_weight): tone equalizer
+# bands in EV for its mask at -8..0 EV. The mask is shifted by SIGN_MASK_EV, so the bands
+# act on scene-linear -6..+2 EV after darktable's exposure. In darktable's default render
+# -1 EV is ~L 78 (-0.1 EV), 0 EV ~L 90 (-0.5), the clip point +0.7 ~L 97 (about -1.2),
+# +2 EV -2.8: shadows, mid-tones and skin do not move; a light box comes back below white
+# with its lettering (the RAW keeps it under the clip point). Guided filter, wide
+# smoothing: the whole sign gets one correction, so its local contrast is kept.
+# Kumamoto night streets (2026-11-14): lettering of white light boxes and arcade signs
+# readable again, orange signs orange instead of salmon; overall brightness unchanged.
+SIGN_BANDS = (0.0, 0.0, 0.0, 0.0, 0.0, -0.1, -0.5, -1.5, -2.8)
+SIGN_MASK_EV = -2.0
+
+
+def p_toneequal(weight):
+    """tone equalizer v2: noise..speculars (9 bands, EV), smoothing diameter, curve
+    smoothing, edge feathering, mask quantization, mask contrast/exposure compensation,
+    details (2 = guided filter), luminance estimator (4 = RGB euclidean norm), iterations."""
+    bands = [b * weight for b in SIGN_BANDS]
+    return struct.pack("<15f3i", *bands, 10.0, math.sqrt(2.0), 5.0, 0.0, 0.0, SIGN_MASK_EV, 2, 4, 1)
+
+
 def p_channelmixer_cat(x, y):
     """colour calibration v3, used as a 2nd instance: CAT16 from a custom
     illuminant (x, y) to the pipeline's D50, identity channel mixing."""
@@ -372,6 +394,8 @@ def correction_entries(plan, is_raw):
         return ents
     if abs(plan.get("ev", 0.0)) >= 0.05 or plan.get("black", 0.0) > 0:
         ents.append(("exposure", 7, p_exposure(plan.get("ev", 0.0), is_raw, plan.get("black", 0.0))))
+    if plan.get("signs", 0.0) > 0 and is_raw:
+        ents.append(("toneequal", 2, p_toneequal(plan["signs"])))
     if plan.get("shadhi"):
         ents.append(("shadhi", 5, p_shadhi(*plan["shadhi"])))
     if plan.get("wb_xy"):
